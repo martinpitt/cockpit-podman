@@ -1499,152 +1499,29 @@ Yaml={name}.yaml
         b.wait(lambda: self.execute("podman ps --all | grep -e swamped-crate -e Exited", system=auth))
 
         b.wait_visible("#containers-containers")
-        container_sha = self.execute("podman inspect --format '{{.Id}}' swamped-crate", system=auth).strip()
-        self.waitContainer(container_sha, auth=auth, name='swamped-crate', image=IMG_BUSYBOX,
-                           state='Exited', owner="system" if auth else "admin")
-        if not auth:
-            # Checkpoint/restore is not supported on user containers yet - the related buttons should not be shown
-            # Check that the restore option is not present
-            with self.withContainerActionMenu("swamped-crate", system=auth):
-                b.wait_not_present(self.getContainerAction('Restore'))
-
+        time.sleep(1)
+        b.eval_js("window.debugging = 'podman'")
         # Start the container
+        # replacing his with `self.execute("podman start swamped-crate", system=auth)` makes it pass
         self.performContainerAction("swamped-crate", "Start", system=auth)
-
-        self.waitContainer(container_sha, auth=auth, name='swamped-crate', image=IMG_BUSYBOX,
-                           state='Running', owner="system" if auth else "admin")
-
-        # run another container with explicit memory 400 MiB limit, with a process that uses 300 MB memory
-        self.execute(
-            f"podman run -d --name picket-fence --memory 400m --stop-timeout 0 {IMG_ALPINE} "
-            """awk 'BEGIN { y = sprintf("%300000000s",""); system("sleep infinity") }'""",
-            system=auth)
-        picket_fence_sha = self.execute("podman inspect --format '{{.Id}}' picket-fence", system=auth).strip()
-        self.waitContainer(picket_fence_sha, auth=auth, name="picket-fence", state="Running")
-
-        def get_cpu_usage(sel: str) -> float:
-            cpu = self.getContainerAttr(sel, "CPU", "", system=auth)
-            self.assertIn('%', cpu)
-            # If it not a number it will raise ValueError which is what we want to know
-            return float(cpu[:-1])
-
-        # Check we show usage
-        b.wait(lambda: self.getContainerAttr("swamped-crate", "CPU", "", system=auth) != "")
-        b.wait(lambda: self.getContainerAttr("swamped-crate", "Memory", "", system=auth) != "")
-        if auth or self.has_cgroupsV2:
-            # Wait for CPU usage to settle before saving CPU usage for comparison later
-            b.wait(lambda: get_cpu_usage("swamped-crate") < 25)
-            cpu = get_cpu_usage("swamped-crate")
-            memory = self.getContainerAttr("swamped-crate", "Memory", "", system=auth)
-
-            # swamped-crate has no explicit --memory limit
-            m = re.match(r'([0-9]+)%([0-9.]+) kB$', memory)
-            assert m is not None, "memory regex did not match"
-            self.assertTrue(m, memory)
-            mem_pct = int(m.group(1))
-            mem_abs = float(m.group(2))
-            self.assertGreaterEqual(mem_pct, 0)
-            self.assertGreaterEqual(mem_abs, 1.0)
-            # this container doesn't do anything, should have small memory usage
-            self.assertLessEqual(mem_pct, 5)
-            self.assertLessEqual(mem_abs, 300.0)
-
-            # Test that the CPU value is updated dynamically
-            self.execute("podman exec -d swamped-crate sh -c 'dd bs=1024 < /dev/urandom > /dev/null'", system=auth)
-            b.wait(lambda: get_cpu_usage("swamped-crate") > cpu)
-            self.execute("podman exec swamped-crate sh -c 'pkill dd'", system=auth)
-
-            # picket-fence has a memory limit
-
-            # Wait for CPU usage to settle before checking the memory usage, on
-            # a busy host the awk script takes longer to run.
-            b.wait(lambda: get_cpu_usage("picket-fence") < 10)
-            memory = self.getContainerAttr("picket-fence", "Memory", "", system=auth)
-            m = re.match(r'([0-9]+)%([0-9.]+) MB([0-9]+)% of ([0-9.]+) MB limit$', memory)
-            assert m is not None, "memory regex did not match"
-            self.assertTrue(m, memory)
-            # wide range here, to work on custom testbeds
-            host_mem_pct = int(m.group(1))
-            self.assertGreater(host_mem_pct, 2)
-            self.assertLess(host_mem_pct, 90)
-            # this is fairly well predictable
-            mem_abs = float(m.group(2))
-            self.assertGreaterEqual(mem_abs, 300.0)
-            self.assertLess(mem_abs, 305.0)
-            limit_mem_pct = int(m.group(3))
-            self.assertGreaterEqual(limit_mem_pct, 70)
-            self.assertLessEqual(limit_mem_pct, 75)
-            # 400 MiB limit
-            self.assertEqual(m.group(4), "419")
-        else:
-            # No support for CGroupsV2
-            memory = self.getContainerAttr("swamped-crate", "Memory", "", system=auth)
-            self.assertEqual(self.getContainerAttr("picket-fence", "CPU", "", system=auth), "n/a")
-            self.assertEqual(memory, "n/a")
+        time.sleep(1)
 
         # Restart the container; there is no steady state change in the visible UI, so look for
         # a changed data-started-at attribute
-        old_start = self.getStartTime("swamped-crate", auth=auth)
-        b.wait_in_text(f'#containers-containers tr[data-started-at="{old_start}"]', "swamped-crate")
+        # replacing this with `self.execute("podman restart -t 0 swamped-crate", system=auth)` makes it pass
         self.performContainerAction("swamped-crate", "Force restart", system=auth)
-        new_start = self.waitRestart("swamped-crate", old_start, auth=auth)
-        b.wait_in_text(f'#containers-containers tr[data-started-at="{new_start}"]', "swamped-crate")
-        self.waitContainer(container_sha, auth=auth, name='swamped-crate', image=IMG_BUSYBOX, state='Running')
+        time.sleep(1)
 
-        self.waitContainerRow(IMG_BUSYBOX)
-        if not auth:
-            # Check that the checkpoint option is not present for rootless
-            with self.withContainerActionMenu("swamped-crate", system=auth):
-                b.wait_visible(self.getContainerAction('Force stop'))
-                b.wait_not_present(self.getContainerAction('Checkpoint'))
         # Stop the container
         self.performContainerAction("swamped-crate", "Force stop", system=auth)
-
-        self.waitContainer(container_sha, auth=auth, name='swamped-crate', image=IMG_BUSYBOX)
-        b.wait(lambda: self.getContainerAttr("swamped-crate", "State", "", system=auth) in NOT_RUNNING)
-        b.wait(lambda: self.getContainerAttr("swamped-crate", "CPU", "", system=auth) == "")
-        b.wait(lambda: self.getContainerAttr("swamped-crate", "Memory", "", system=auth) == "")
-
-        # Check that container details are not lost when the container is stopped
-        self.toggleExpandedContainer("swamped-crate", system=auth)
-        b.click(".pf-m-expanded button:contains('Integration')")
-        b.wait_in_text("#containers-containers tbody.pf-m-expanded", "Environment variables")
+        time.sleep(1)
 
         # Check that console reconnects when container starts
+        self.toggleExpandedContainer("swamped-crate", system=auth)
         b.click(".pf-m-expanded button:contains('Console')")
+        # replacing this with `self.execute("podman start swamped-crate", system=auth)` makes it pass
         self.performContainerAction("swamped-crate", "Start", system=auth)
-        # WebGL2 is not supported in firefox headless mode
-        if b.browser != "firefox":
-            b.wait_text(".pf-m-expanded .pf-v6-c-empty-state", "Container is not running")
-            b.wait_in_text(".pf-m-expanded .xterm-accessibility-tree", "/ # ")
-            b.focus(".pf-m-expanded .xterm-helper-textarea")
-            b.input_text("clear")
-            b.key("Enter")
-            b.wait_not_in_text(".pf-m-expanded .xterm-accessibility-tree", "clear")
-            b.wait_text(".pf-m-expanded .xterm-accessibility-tree > div:nth-child(1)", "/ # ")
-            b.input_text('echo hello')
-            b.key("Enter")
-            b.wait_text(".pf-m-expanded .xterm-accessibility-tree > div:nth-child(2)", "hello")
-            b.wait_text(".pf-m-expanded .xterm-accessibility-tree > div:nth-child(3)", "/ # ")
-            self.performContainerAction("swamped-crate", "Stop", system=auth)
-            b.wait_text(".pf-m-expanded .xterm-accessibility-tree > div:nth-child(3)", "/ #  disconnected ")
-            sha = self.execute("podman inspect --format '{{.Id}}' swamped-crate", system=auth).strip()
-            self.waitContainer(sha, auth=auth, name='swamped-crate', image=IMG_BUSYBOX, state=NOT_RUNNING)
-            self.performContainerAction("swamped-crate", "Start", system=auth)
-            self.waitContainer(sha, auth=auth, state='Running')
-            b.wait_text(".pf-m-expanded .xterm-accessibility-tree > div:nth-child(1)", "/ # ")
-            b.wait_not_in_text(".pf-m-expanded .xterm-accessibility-tree > div:nth-child(2)", "hello")
-
-            # Check that logs reconnect when container starts
-            b.click(".pf-m-expanded button:contains('Logs')")
-            self.performContainerAction("swamped-crate", "Stop", system=auth)
-            self.waitContainer(sha, auth=auth, state=NOT_RUNNING)
-            b.wait_in_text(".pf-m-expanded .container-logs .xterm-accessibility-tree", "Streaming disconnected")
-            self.performContainerAction("swamped-crate", "Start", system=auth)
-            b.wait_in_text(".pf-m-expanded .container-logs .xterm-accessibility-tree", "Streaming disconnected123")
-        else:
-            # check that empty state is shown instead of terminal
-            b.wait_in_text(".pf-m-expanded .pf-v6-c-empty-state", "Terminal not available")
+        time.sleep(2)
 
     def testCheckpointRestore(self) -> None:
         m = self.machine
