@@ -1498,29 +1498,39 @@ Yaml={name}.yaml
                 podman stop swamped-crate""", system=auth)
         b.wait(lambda: self.execute("podman ps --all | grep -e swamped-crate -e Exited", system=auth))
 
+        # Get container ID for REST API calls
+        container_id = self.execute("podman inspect --format '{{.Id}}' swamped-crate", system=auth).strip()
+        socket = "/run/user/1000/podman/podman.sock"
+
+        def api_call(action: str, params: str = "") -> None:
+            """Call podman REST API directly"""
+            query = f"?{params}" if params else ""
+            self.execute(f"curl -X POST 'http://localhost/v3.4.0/libpod/containers/{container_id}/{action}{query}' --unix-socket {socket}", system=auth)
+
         b.wait_visible("#containers-containers")
         time.sleep(1)
         b.eval_js("window.debugging = 'podman'")
         # Start the container
-        # replacing his with `self.execute("podman start swamped-crate", system=auth)` makes it pass
-        self.performContainerAction("swamped-crate", "Start", system=auth)
+        # replacing his with `self.execute("podman start swamped-crate", system=auth)` makes it pass,
+        # similar for the other commands below. this requires using the API.
+        api_call("start")
         time.sleep(1)
 
         # Restart the container; there is no steady state change in the visible UI, so look for
         # a changed data-started-at attribute
         # replacing this with `self.execute("podman restart -t 0 swamped-crate", system=auth)` makes it pass
-        self.performContainerAction("swamped-crate", "Force restart", system=auth)
+        api_call("restart", "t=0")
         time.sleep(1)
 
         # Stop the container
-        self.performContainerAction("swamped-crate", "Force stop", system=auth)
+        api_call("stop", "t=0")
         time.sleep(1)
 
         # Check that console reconnects when container starts
         self.toggleExpandedContainer("swamped-crate", system=auth)
         b.click(".pf-m-expanded button:contains('Console')")
         # replacing this with `self.execute("podman start swamped-crate", system=auth)` makes it pass
-        self.performContainerAction("swamped-crate", "Start", system=auth)
+        api_call("start")
         time.sleep(2)
 
     def testCheckpointRestore(self) -> None:
